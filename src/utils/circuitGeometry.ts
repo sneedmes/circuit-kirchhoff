@@ -54,10 +54,22 @@ export interface CircuitNodeDetection {
  * Единая точка истины для определения электрических кластеров схемы.
  *
  * Провода объединяют точки в электрические кластеры.
- * Существенным узлом считается кластер, к которому подключено
- * не менее трех выводов элементов.
  *
- * Порядок существенных узлов стабилен:
+ * Обычный существенный узел:
+ *   - кластер, к которому подключено не менее трех выводов элементов.
+ *
+ * Дополнительный случай:
+ *   - конец параллельных ветвей.
+ *
+ * Последний случай нужен для корректного представления multigraph:
+ *
+ *      A ── R1 ── B
+ *      A ── R2 ── B
+ *
+ * Здесь B может иметь только два подключения элементов,
+ * но его нельзя схлопывать в последовательную branch.
+ *
+ * Порядок узлов стабилен:
  * сначала X, затем Y.
  */
 export const detectCircuitNodes = (
@@ -178,6 +190,7 @@ export const detectCircuitNodes = (
     pointsByCluster.get(clusterId)!.push(point);
 
     const key = coordKey(point.x, point.y);
+
     pinCountByClusterKey.set(
       `${clusterId}|${key}`,
       (pinCountByClusterKey.get(`${clusterId}|${key}`) ?? 0) + 1
@@ -187,11 +200,13 @@ export const detectCircuitNodes = (
   wires.forEach((wire) => {
     const fromKey = coordKey(wire.from.x, wire.from.y);
     const toKey = coordKey(wire.to.x, wire.to.y);
+
     const clusterId =
       canonicalIdByRoot.get(dsu.find(fromKey)) ?? dsu.find(fromKey);
 
     for (const key of [fromKey, toKey]) {
       const mapKey = `${clusterId}|${key}`;
+
       wireDegreeByClusterKey.set(
         mapKey,
         (wireDegreeByClusterKey.get(mapKey) ?? 0) + 1
@@ -221,7 +236,63 @@ export const detectCircuitNodes = (
   );
 
   /*
-   * 5. Формируем существенные узлы.
+   * 5. Находим электрические кластеры, которые являются
+   * концами параллельных ветвей.
+   *
+   * В обычной последовательной цепочке:
+   *
+   *     A ── R1 ── X ── R2 ── B
+   *
+   * X имеет два подключения и может быть схлопнут
+   * при построении branch.
+   *
+   * Но в параллельной структуре:
+   *
+   *     A ── R1 ── B
+   *     A ── R2 ── B
+   *
+   * B также имеет два подключения, однако его нельзя
+   * схлопывать, иначе R1 и R2 превратятся в одну branch:
+   *
+   *     A ── R1 ── R2 ── A
+   *
+   * Поэтому оба конца пары параллельных элементов
+   * сохраняются как топологические узлы.
+   */
+  const parallelEndpointIds = new Set<string>();
+
+  const pairCounts = new Map<string, number>();
+
+  elementLinks.forEach((link) => {
+    if (link.c1 === link.c2) {
+      return;
+    }
+
+    const [a, b] = [link.c1, link.c2].sort();
+    const pairKey = `${a}|${b}`;
+
+    pairCounts.set(
+      pairKey,
+      (pairCounts.get(pairKey) ?? 0) + 1
+    );
+  });
+
+  elementLinks.forEach((link) => {
+    if (link.c1 === link.c2) {
+      return;
+    }
+
+    const [a, b] = [link.c1, link.c2].sort();
+    const pairKey = `${a}|${b}`;
+
+    if ((pairCounts.get(pairKey) ?? 0) >= 2) {
+      parallelEndpointIds.add(link.c1);
+      parallelEndpointIds.add(link.c2);
+    }
+  });
+
+  /*
+   * 6. Формируем существенные узлы.
    *
    * Позиция узла НЕ является средним арифметическим pin-координат.
    *
@@ -240,13 +311,25 @@ export const detectCircuitNodes = (
     points: Point[]
   ): Point => {
     const uniqueKeys = Array.from(
-      new Set(points.map((point) => coordKey(point.x, point.y)))
+      new Set(
+        points.map((point) =>
+          coordKey(point.x, point.y)
+        )
+      )
     );
 
     const candidates = uniqueKeys.map((key) => {
       const [x, y] = key.split(',').map(Number);
-      const pinCount = pinCountByClusterKey.get(`${id}|${key}`) ?? 0;
-      const wireDegree = wireDegreeByClusterKey.get(`${id}|${key}`) ?? 0;
+
+      const pinCount =
+        pinCountByClusterKey.get(
+          `${id}|${key}`
+        ) ?? 0;
+
+      const wireDegree =
+        wireDegreeByClusterKey.get(
+          `${id}|${key}`
+        ) ?? 0;
 
       return {
         key,
@@ -256,12 +339,14 @@ export const detectCircuitNodes = (
       };
     });
 
-    const junctionCandidates = candidates.filter(
-      (candidate) =>
-        candidate.wireDegree >= 3 ||
-        candidate.pinCount >= 2 ||
-        (candidate.pinCount >= 1 && candidate.wireDegree >= 2)
-    );
+    const junctionCandidates =
+      candidates.filter(
+        (candidate) =>
+          candidate.wireDegree >= 3 ||
+          candidate.pinCount >= 2 ||
+          (candidate.pinCount >= 1 &&
+            candidate.wireDegree >= 2)
+      );
 
     if (junctionCandidates.length > 0) {
       return junctionCandidates.sort(
@@ -274,14 +359,31 @@ export const detectCircuitNodes = (
     }
 
     const center = {
-      x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
-      y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+      x:
+        points.reduce(
+          (sum, point) =>
+            sum + point.x,
+          0
+        ) / points.length,
+
+      y:
+        points.reduce(
+          (sum, point) =>
+            sum + point.y,
+          0
+        ) / points.length,
     };
 
     return candidates.sort(
       (a, b) =>
-        Math.hypot(a.point.x - center.x, a.point.y - center.y) -
-          Math.hypot(b.point.x - center.x, b.point.y - center.y) ||
+        Math.hypot(
+          a.point.x - center.x,
+          a.point.y - center.y
+        ) -
+          Math.hypot(
+            b.point.x - center.x,
+            b.point.y - center.y
+          ) ||
         a.point.x - b.point.x ||
         a.point.y - b.point.y
     )[0].point;
@@ -294,21 +396,35 @@ export const detectCircuitNodes = (
    *     X ↑
    *     при равном X → Y ↑
    */
-  const clusters: CircuitNodeCluster[] = Array.from(
-    pointsByCluster.entries()
-  )
-    .map(([id, points]) => ({
-      id,
-      points,
-      connectionsCount: points.length,
-      position: getNodePosition(id, points),
-    }))
-    .filter((cluster) => cluster.connectionsCount >= 3)
-    .sort(
-      (a, b) =>
-        a.position.x - b.position.x ||
-        a.position.y - b.position.y
-    );
+  const clusters: CircuitNodeCluster[] =
+    Array.from(
+      pointsByCluster.entries()
+    )
+      .map(([id, points]) => ({
+        id,
+        points,
+        connectionsCount:
+          points.length,
+        position:
+          getNodePosition(
+            id,
+            points
+          ),
+      }))
+      .filter(
+        (cluster) =>
+          cluster.connectionsCount >= 3 ||
+          parallelEndpointIds.has(
+            cluster.id
+          )
+      )
+      .sort(
+        (a, b) =>
+          a.position.x -
+            b.position.x ||
+          a.position.y -
+            b.position.y
+      );
 
   return {
     clusters,
@@ -320,29 +436,50 @@ export const detectVisualNodes = (
   elements: CircuitElement[],
   wires: Wire[]
 ): VisualNode[] => {
-  const { clusters } = detectCircuitNodes(elements, wires);
+  const { clusters } =
+    detectCircuitNodes(
+      elements,
+      wires
+    );
 
-  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const letters =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-  return clusters.map((cluster, index) => ({
-    id: cluster.id,
-    label: letters[index % letters.length],
-    position: cluster.position,
-    connectionsCount: cluster.connectionsCount,
-  }));
+  return clusters.map(
+    (cluster, index) => ({
+      id: cluster.id,
+      label:
+        letters[
+          index %
+            letters.length
+        ],
+      position:
+        cluster.position,
+      connectionsCount:
+        cluster.connectionsCount,
+    })
+  );
 };
 
 export const findPinPosition = (
   pinId: string | undefined,
   elements: CircuitElement[]
 ): Point | null => {
-  if (!pinId) return null;
+  if (!pinId) {
+    return null;
+  }
 
   for (const el of elements) {
-    const [p1, p2] = getElementPins(el);
+    const [p1, p2] =
+      getElementPins(el);
 
-    if (p1.id === pinId) return p1.position;
-    if (p2.id === pinId) return p2.position;
+    if (p1.id === pinId) {
+      return p1.position;
+    }
+
+    if (p2.id === pinId) {
+      return p2.position;
+    }
   }
 
   return null;
@@ -354,7 +491,8 @@ export const findNearbyPin = (
   threshold: number = 10
 ): Pin | null => {
   for (const el of elements) {
-    const pins = getElementPins(el);
+    const pins =
+      getElementPins(el);
 
     for (const p of pins) {
       const dist = Math.hypot(
@@ -377,39 +515,77 @@ export const isPointOnSegment = (
   b: Point,
   tolerance: number = 6
 ): boolean => {
-  const lineLen = Math.hypot(b.x - a.x, b.y - a.y);
+  const lineLen = Math.hypot(
+    b.x - a.x,
+    b.y - a.y
+  );
 
   if (lineLen === 0) {
-    return Math.hypot(p.x - a.x, p.y - a.y) <= tolerance;
+    return (
+      Math.hypot(
+        p.x - a.x,
+        p.y - a.y
+      ) <= tolerance
+    );
   }
 
   const t =
-    ((p.x - a.x) * (b.x - a.x) +
-      (p.y - a.y) * (b.y - a.y)) /
+    ((p.x - a.x) *
+      (b.x - a.x) +
+      (p.y - a.y) *
+        (b.y - a.y)) /
     (lineLen * lineLen);
 
-  if (t < 0.05 || t > 0.95) {
+  if (
+    t < 0.05 ||
+    t > 0.95
+  ) {
     return false;
   }
 
-  const projX = a.x + t * (b.x - a.x);
-  const projY = a.y + t * (b.y - a.y);
+  const projX =
+    a.x + t * (b.x - a.x);
 
-  return Math.hypot(p.x - projX, p.y - projY) <= tolerance;
+  const projY =
+    a.y + t * (b.y - a.y);
+
+  return (
+    Math.hypot(
+      p.x - projX,
+      p.y - projY
+    ) <= tolerance
+  );
 };
 
 export const findNearbyWire = (
   point: Point,
   wires: Wire[],
   tolerance: number = 8
-): { wire: Wire; splitPoint: Point } | null => {
+): {
+  wire: Wire;
+  splitPoint: Point;
+} | null => {
   for (const w of wires) {
-    if (isPointOnSegment(point, w.from, w.to, tolerance)) {
+    if (
+      isPointOnSegment(
+        point,
+        w.from,
+        w.to,
+        tolerance
+      )
+    ) {
       return {
         wire: w,
         splitPoint: {
-          x: Math.round(point.x / 20) * 20,
-          y: Math.round(point.y / 20) * 20,
+          x:
+            Math.round(
+              point.x / 20
+            ) * 20,
+
+          y:
+            Math.round(
+              point.y / 20
+            ) * 20,
         },
       };
     }
