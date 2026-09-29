@@ -496,14 +496,43 @@ export const findIndependentLoops = (
       return;
     }
 
-    const points = cycle
-      .map((edge) =>
-        nodeById.get(edge.fromNodeId)
-      )
-      .filter(
-        (point): point is Point =>
-          Boolean(point)
-      );
+    /*
+     * Для обычного контура достаточно вершин узлов,
+     * но для параллельных ветвей возникает важный случай:
+     *
+     *     A ─────── B
+     *     A ─────── B
+     *
+     * Грань тогда состоит всего из двух электрических узлов.
+     * Если считать площадь только по [A, B], получится 0,
+     * хотя визуально между двумя ветвями есть полноценная ячейка.
+     *
+     * Поэтому в геометрию границы добавляем marker ветви
+     * как промежуточную точку:
+     *
+     *     A → marker → B → marker → A
+     *
+     * Это также сохраняет различие между параллельными
+     * визуальными ветвями.
+     */
+    const points: Point[] = [];
+
+    cycle.forEach((edge) => {
+      const from = nodeById.get(edge.fromNodeId);
+      const to = nodeById.get(edge.toNodeId);
+
+      if (from) {
+        points.push(from);
+      }
+
+      if (edge.branch.marker) {
+        points.push(edge.branch.marker.baseCenter);
+      }
+
+      if (to) {
+        points.push(to);
+      }
+    });
 
     const area = getLoopArea(points);
 
@@ -760,37 +789,55 @@ export const generateKVLEquations = (
       }
     );
 
-    let leftSide =
-      voltageDrops.length > 0
-        ? voltageDrops.join(' ')
+    const leftTerms = [
+      ...voltageDrops,
+    ];
+
+    const rightTerms = emfs.map(
+      (term) => {
+        return term.startsWith('+ ')
+          ? term.slice(2)
+          : term.startsWith('- ')
+            ? `- ${term.slice(2)}`
+            : term;
+      }
+    );
+
+    /*
+     * Если сопротивлений нет, левая часть
+     * может быть пустой.
+     */
+    const leftExpression =
+      leftTerms.length > 0
+        ? leftTerms.join(' ')
         : '0';
 
-    if (
-      leftSide.startsWith('+ ')
-    ) {
-      leftSide =
-        leftSide.substring(2);
-    }
+    /*
+     * Источники оставляем в правой части.
+     */
+    let rightExpression = '0';
 
-    let rightSide =
-      emfs.length > 0
-        ? emfs.join(' ')
-        : '0';
+    if (rightTerms.length > 0) {
+      rightExpression =
+        rightTerms
+          .map((term, index) => {
+            if (index === 0) {
+              return term;
+            }
 
-    if (
-      rightSide.startsWith('+ ')
-    ) {
-      rightSide =
-        rightSide.substring(2);
+            return term.startsWith('- ')
+              ? term
+              : `+ ${term}`;
+          })
+          .join(' ');
     }
 
     equations.push({
       id: loop.id,
       type: 'KVL',
-      targetLabel:
-        `Контур ${loop.index}`,
+      targetLabel: `Контур ${loop.index}`,
       latex:
-        `${leftSide} = ${rightSide}`,
+        `${leftExpression} = ${rightExpression}`,
     });
   });
 

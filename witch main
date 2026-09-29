@@ -1,0 +1,5 @@
+[33mbecc81a[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m fix: align current arrows with branch elements
+[33m93bae0d[m refactor: detect planar face loops for KVL
+[33m78e81de[m refactor: stabilize branch reference direction
+[33m8d12089[m refactor: normalize circuit node geometry
+[33mbbad6a2[m refactor: unify circuit node detection
