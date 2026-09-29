@@ -1,0 +1,78 @@
+.elementGroup {
+  cursor: grab;
+  user-select: none;
+}
+
+.elementGroup:active {
+  cursor: grabbing;
+}
+
+.wirePath {
+  stroke: #0f172a;
+  stroke-width: 2;
+  stroke-linecap: round;
+  fill: none;
+}
+
+.symbolBody {
+  stroke: #0f172a;
+  stroke-width: 2;
+  fill: #ffffff;
+}
+
+.arrow {
+  stroke: #0f172a;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pin {
+  fill: #3b82f6;
+  stroke: #1e293b;
+  stroke-width: 1.5;
+  transition: r 0.1s ease;
+}
+
+.pin:hover {
+  r: 5;
+  fill: #ef4444;
+}
+
+.label {
+  font-size: 13px;
+  font-family: 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 600;
+  fill: #0f172a;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.selected .symbolBody {
+  stroke: #2563eb;
+  stroke-width: 2.5;
+}
+
+.selected .wirePath {
+  stroke: #2563eb;
+  stroke-width: 2.5;
+}
+
+.selectionBox {
+  fill: none;
+  stroke: #3b82f6;
+  stroke-dasharray: 4 4;
+  stroke-width: 1;
+}
+
+.highlighted .symbolBody {
+  stroke: #8b5cf6 !important;
+  stroke-width: 3.5 !important;
+}
+
+.highlighted .wirePath {
+  stroke: #8b5cf6 !important;
+  stroke-width: 3.5 !important;
+}
