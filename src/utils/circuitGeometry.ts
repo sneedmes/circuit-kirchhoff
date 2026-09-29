@@ -159,8 +159,14 @@ export const detectCircuitNodes = (
 
   /*
    * 3. Собираем точки подключения элементов каждого кластера.
+   *
+   * Отдельно считаем степень каждой геометрической точки по проводам.
+   * Это позволяет отличить реальную точку junction от произвольного
+   * набора точек одного электрического кластера.
    */
   const pointsByCluster = new Map<string, Point[]>();
+  const pinCountByClusterKey = new Map<string, number>();
+  const wireDegreeByClusterKey = new Map<string, number>();
 
   const addPoint = (root: string, point: Point): void => {
     const clusterId = canonicalIdByRoot.get(root) ?? root;
@@ -170,7 +176,28 @@ export const detectCircuitNodes = (
     }
 
     pointsByCluster.get(clusterId)!.push(point);
+
+    const key = coordKey(point.x, point.y);
+    pinCountByClusterKey.set(
+      `${clusterId}|${key}`,
+      (pinCountByClusterKey.get(`${clusterId}|${key}`) ?? 0) + 1
+    );
   };
+
+  wires.forEach((wire) => {
+    const fromKey = coordKey(wire.from.x, wire.from.y);
+    const toKey = coordKey(wire.to.x, wire.to.y);
+    const clusterId =
+      canonicalIdByRoot.get(dsu.find(fromKey)) ?? dsu.find(fromKey);
+
+    for (const key of [fromKey, toKey]) {
+      const mapKey = `${clusterId}|${key}`;
+      wireDegreeByClusterKey.set(
+        mapKey,
+        (wireDegreeByClusterKey.get(mapKey) ?? 0) + 1
+      );
+    }
+  });
 
   /*
    * 4. Нормализуем связи элементов к каноническим ID кластеров.
@@ -196,6 +223,71 @@ export const detectCircuitNodes = (
   /*
    * 5. Формируем существенные узлы.
    *
+   * Позиция узла НЕ является средним арифметическим pin-координат.
+   *
+   * Приоритет выбора геометрической точки:
+   *   1. точка с несколькими проводными сегментами (junction);
+   *   2. точка, в которой совпадают несколько pin'ов;
+   *   3. точка с pin + несколькими проводными сегментами;
+   *   4. детерминированный fallback — существующая pin-точка,
+   *      ближайшая к геометрическому центру кластера.
+   *
+   * Поэтому буква узла всегда привязана к реально существующей точке
+   * схемы, а не «плавает» между элементами.
+   */
+  const getNodePosition = (
+    id: string,
+    points: Point[]
+  ): Point => {
+    const uniqueKeys = Array.from(
+      new Set(points.map((point) => coordKey(point.x, point.y)))
+    );
+
+    const candidates = uniqueKeys.map((key) => {
+      const [x, y] = key.split(',').map(Number);
+      const pinCount = pinCountByClusterKey.get(`${id}|${key}`) ?? 0;
+      const wireDegree = wireDegreeByClusterKey.get(`${id}|${key}`) ?? 0;
+
+      return {
+        key,
+        point: { x, y },
+        pinCount,
+        wireDegree,
+      };
+    });
+
+    const junctionCandidates = candidates.filter(
+      (candidate) =>
+        candidate.wireDegree >= 3 ||
+        candidate.pinCount >= 2 ||
+        (candidate.pinCount >= 1 && candidate.wireDegree >= 2)
+    );
+
+    if (junctionCandidates.length > 0) {
+      return junctionCandidates.sort(
+        (a, b) =>
+          b.wireDegree - a.wireDegree ||
+          b.pinCount - a.pinCount ||
+          a.point.x - b.point.x ||
+          a.point.y - b.point.y
+      )[0].point;
+    }
+
+    const center = {
+      x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+      y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+    };
+
+    return candidates.sort(
+      (a, b) =>
+        Math.hypot(a.point.x - center.x, a.point.y - center.y) -
+          Math.hypot(b.point.x - center.x, b.point.y - center.y) ||
+        a.point.x - b.point.x ||
+        a.point.y - b.point.y
+    )[0].point;
+  };
+
+  /*
    * ВАЖНО:
    * сортировка является частью topology contract:
    *
@@ -209,14 +301,7 @@ export const detectCircuitNodes = (
       id,
       points,
       connectionsCount: points.length,
-      position: {
-        x: Math.round(
-          points.reduce((sum, point) => sum + point.x, 0) / points.length
-        ),
-        y: Math.round(
-          points.reduce((sum, point) => sum + point.y, 0) / points.length
-        ),
-      },
+      position: getNodePosition(id, points),
     }))
     .filter((cluster) => cluster.connectionsCount >= 3)
     .sort(
