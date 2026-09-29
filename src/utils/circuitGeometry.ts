@@ -30,55 +30,221 @@ export const getElementPins = (element: CircuitElement): [Pin, Pin] => {
   ];
 };
 
-export const detectVisualNodes = (elements: CircuitElement[], wires: Wire[]): VisualNode[] => {
-  const coordKey = (x: number, y: number) => {
+export interface CircuitNodeCluster {
+  id: string;
+  position: Point;
+  connectionsCount: number;
+  points: Point[];
+}
+
+export interface CircuitElementClusterLink {
+  element: CircuitElement;
+  c1: string;
+  c2: string;
+  p1: Point;
+  p2: Point;
+}
+
+export interface CircuitNodeDetection {
+  clusters: CircuitNodeCluster[];
+  elementLinks: CircuitElementClusterLink[];
+}
+
+/**
+ * Единая точка истины для определения электрических кластеров схемы.
+ *
+ * Провода объединяют точки в электрические кластеры.
+ * Существенным узлом считается кластер, к которому подключено
+ * не менее трех выводов элементов.
+ *
+ * Порядок существенных узлов стабилен:
+ * сначала X, затем Y.
+ */
+export const detectCircuitNodes = (
+  elements: CircuitElement[],
+  wires: Wire[]
+): CircuitNodeDetection => {
+  const coordKey = (x: number, y: number): string => {
     const qx = Math.round(x / GRID_SIZE) * GRID_SIZE;
     const qy = Math.round(y / GRID_SIZE) * GRID_SIZE;
+
     return `${qx},${qy}`;
   };
 
-  // 1. Объединяем точки, соединенные чистыми проводами
   const dsu = new DSU();
-  wires.forEach((w) => {
-    dsu.union(coordKey(w.from.x, w.from.y), coordKey(w.to.x, w.to.y));
+
+  // 1. Объединяем точки, соединённые проводами.
+  wires.forEach((wire) => {
+    dsu.union(
+      coordKey(wire.from.x, wire.from.y),
+      coordKey(wire.to.x, wire.to.y)
+    );
   });
 
-  // 2. Подсчитываем, сколько пинов элементов подключено к каждому кластеру проводов
-  const clusterPins = new Map<string, Point[]>();
-  elements.forEach((el) => {
-    const [p1, p2] = getElementPins(el);
-    const k1 = dsu.find(coordKey(p1.position.x, p1.position.y));
-    const k2 = dsu.find(coordKey(p2.position.x, p2.position.y));
+  // 2. Определяем, к каким электрическим кластерам подключены
+  // оба вывода каждого элемента.
+  const rawLinks = elements.map((element) => {
+    const [pin1, pin2] = getElementPins(element);
 
-    if (!clusterPins.has(k1)) clusterPins.set(k1, []);
-    if (!clusterPins.has(k2)) clusterPins.set(k2, []);
-    clusterPins.get(k1)!.push(p1.position);
-    clusterPins.get(k2)!.push(p2.position);
+    const p1 = pin1.position;
+    const p2 = pin2.position;
+
+    const k1 = coordKey(p1.x, p1.y);
+    const k2 = coordKey(p2.x, p2.y);
+
+    return {
+      element,
+      c1: dsu.find(k1),
+      c2: dsu.find(k2),
+      p1,
+      p2,
+      k1,
+      k2,
+    };
   });
+
+  /*
+   * DSU root не используем как внешний ID.
+   *
+   * Например, один и тот же электрический кластер при другом порядке
+   * union() потенциально может получить другой root.
+   *
+   * Поэтому строим стабильный ID из минимальной координаты,
+   * принадлежащей кластеру.
+   */
+  const clusterKeys = new Map<string, Set<string>>();
+
+  const addClusterKey = (root: string, key: string): void => {
+    if (!clusterKeys.has(root)) {
+      clusterKeys.set(root, new Set());
+    }
+
+    clusterKeys.get(root)!.add(key);
+  };
+
+  wires.forEach((wire) => {
+    const fromKey = coordKey(wire.from.x, wire.from.y);
+    const toKey = coordKey(wire.to.x, wire.to.y);
+
+    const root = dsu.find(fromKey);
+
+    addClusterKey(root, fromKey);
+    addClusterKey(root, toKey);
+  });
+
+  rawLinks.forEach(({ k1, k2 }) => {
+    addClusterKey(dsu.find(k1), k1);
+    addClusterKey(dsu.find(k2), k2);
+  });
+
+  const canonicalIdByRoot = new Map<string, string>();
+
+  for (const [root, keys] of clusterKeys) {
+    const canonicalKey = Array.from(keys)
+      .map((key) => {
+        const [x, y] = key.split(',').map(Number);
+
+        return {
+          key,
+          x,
+          y,
+        };
+      })
+      .sort((a, b) => a.x - b.x || a.y - b.y)[0]?.key;
+
+    if (canonicalKey !== undefined) {
+      canonicalIdByRoot.set(root, canonicalKey);
+    }
+  }
+
+  /*
+   * 3. Собираем точки подключения элементов каждого кластера.
+   */
+  const pointsByCluster = new Map<string, Point[]>();
+
+  const addPoint = (root: string, point: Point): void => {
+    const clusterId = canonicalIdByRoot.get(root) ?? root;
+
+    if (!pointsByCluster.has(clusterId)) {
+      pointsByCluster.set(clusterId, []);
+    }
+
+    pointsByCluster.get(clusterId)!.push(point);
+  };
+
+  /*
+   * 4. Нормализуем связи элементов к каноническим ID кластеров.
+   */
+  const elementLinks: CircuitElementClusterLink[] = rawLinks.map(
+    ({ element, c1, c2, p1, p2 }) => {
+      const canonicalC1 = canonicalIdByRoot.get(c1) ?? c1;
+      const canonicalC2 = canonicalIdByRoot.get(c2) ?? c2;
+
+      addPoint(c1, p1);
+      addPoint(c2, p2);
+
+      return {
+        element,
+        c1: canonicalC1,
+        c2: canonicalC2,
+        p1,
+        p2,
+      };
+    }
+  );
+
+  /*
+   * 5. Формируем существенные узлы.
+   *
+   * ВАЖНО:
+   * сортировка является частью topology contract:
+   *
+   *     X ↑
+   *     при равном X → Y ↑
+   */
+  const clusters: CircuitNodeCluster[] = Array.from(
+    pointsByCluster.entries()
+  )
+    .map(([id, points]) => ({
+      id,
+      points,
+      connectionsCount: points.length,
+      position: {
+        x: Math.round(
+          points.reduce((sum, point) => sum + point.x, 0) / points.length
+        ),
+        y: Math.round(
+          points.reduce((sum, point) => sum + point.y, 0) / points.length
+        ),
+      },
+    }))
+    .filter((cluster) => cluster.connectionsCount >= 3)
+    .sort(
+      (a, b) =>
+        a.position.x - b.position.x ||
+        a.position.y - b.position.y
+    );
+
+  return {
+    clusters,
+    elementLinks,
+  };
+};
+
+export const detectVisualNodes = (
+  elements: CircuitElement[],
+  wires: Wire[]
+): VisualNode[] => {
+  const { clusters } = detectCircuitNodes(elements, wires);
 
   const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  const nodes: VisualNode[] = [];
-  let letterIdx = 0;
 
-  // ИСТИННЫЙ УЗЕЛ — ЭТО КЛАСТЕР, К КОТОРОМУ ПОДКЛЮЧЕНО СТРОГО >= 3 ЭЛЕМЕНТОВ
-  const significant = Array.from(clusterPins.entries())
-    .filter(([_, pts]) => pts.length >= 3)
-    .sort((a, b) => a[1][0].x - b[1][0].x);
-
-  significant.forEach(([clusterKey, pts]) => {
-    const avgX = Math.round(pts.reduce((s, p) => s + p.x, 0) / pts.length);
-    const avgY = Math.round(pts.reduce((s, p) => s + p.y, 0) / pts.length);
-
-    nodes.push({
-      id: clusterKey,
-      label: letters[letterIdx % letters.length],
-      position: { x: avgX, y: avgY },
-      connectionsCount: pts.length,
-    });
-    letterIdx++;
-  });
-
-  return nodes;
+  return clusters.map((cluster, index) => ({
+    id: cluster.id,
+    label: letters[index % letters.length],
+    position: cluster.position,
+    connectionsCount: cluster.connectionsCount,
+  }));
 };
 
 export const findPinPosition = (
@@ -89,6 +255,7 @@ export const findPinPosition = (
 
   for (const el of elements) {
     const [p1, p2] = getElementPins(el);
+
     if (p1.id === pinId) return p1.position;
     if (p2.id === pinId) return p2.position;
   }
@@ -103,13 +270,19 @@ export const findNearbyPin = (
 ): Pin | null => {
   for (const el of elements) {
     const pins = getElementPins(el);
+
     for (const p of pins) {
-      const dist = Math.hypot(p.position.x - point.x, p.position.y - point.y);
+      const dist = Math.hypot(
+        p.position.x - point.x,
+        p.position.y - point.y
+      );
+
       if (dist <= threshold) {
         return p;
       }
     }
   }
+
   return null;
 };
 
@@ -120,13 +293,23 @@ export const isPointOnSegment = (
   tolerance: number = 6
 ): boolean => {
   const lineLen = Math.hypot(b.x - a.x, b.y - a.y);
-  if (lineLen === 0) return Math.hypot(p.x - a.x, p.y - a.y) <= tolerance;
 
-  const t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / (lineLen * lineLen);
-  if (t < 0.05 || t > 0.95) return false; // Исключаем сами концы отрезка (там пины/стыки)
+  if (lineLen === 0) {
+    return Math.hypot(p.x - a.x, p.y - a.y) <= tolerance;
+  }
+
+  const t =
+    ((p.x - a.x) * (b.x - a.x) +
+      (p.y - a.y) * (b.y - a.y)) /
+    (lineLen * lineLen);
+
+  if (t < 0.05 || t > 0.95) {
+    return false;
+  }
 
   const projX = a.x + t * (b.x - a.x);
   const projY = a.y + t * (b.y - a.y);
+
   return Math.hypot(p.x - projX, p.y - projY) <= tolerance;
 };
 
@@ -139,9 +322,13 @@ export const findNearbyWire = (
     if (isPointOnSegment(point, w.from, w.to, tolerance)) {
       return {
         wire: w,
-        splitPoint: { x: Math.round(point.x / 20) * 20, y: Math.round(point.y / 20) * 20 },
+        splitPoint: {
+          x: Math.round(point.x / 20) * 20,
+          y: Math.round(point.y / 20) * 20,
+        },
       };
     }
   }
+
   return null;
 };
