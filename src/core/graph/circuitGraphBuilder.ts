@@ -11,321 +11,134 @@ import type {
   BranchElement,
 } from '../types';
 
-const comparePoints = (
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number
-): number => {
-  return ax - bx || ay - by;
-};
+const normalizeCardinalAngle = (angle: number): number => {
+  const normalized = ((angle % 360) + 360) % 360;
 
-const compareClusterIds = (
-  a: string,
-  b: string
-): number => {
-  const [ax, ay] = a.split(',').map(Number);
-  const [bx, by] = b.split(',').map(Number);
+  const candidates = [0, 90, 180, 270];
 
-  return (
-    comparePoints(ax, ay, bx, by) ||
-    a.localeCompare(b)
-  );
-};
+  return candidates.reduce((closest, candidate) => {
+    const currentDistance = Math.min(
+      Math.abs(normalized - candidate),
+      360 - Math.abs(normalized - candidate)
+    );
 
-/**
- * Приводит произвольный угол к одному из
- * четырёх допустимых направлений:
- *
- *   0°   →
- *   90°  ↓
- *   180° ←
- *   270° ↑
- */
-const normalizeCardinalAngle = (
-  angle: number
-): number => {
-  let normalized = angle % 360;
+    const closestDistance = Math.min(
+      Math.abs(normalized - closest),
+      360 - Math.abs(normalized - closest)
+    );
 
-  if (normalized < 0) {
-    normalized += 360;
-  }
-
-  /*
-   * Ближайшее из:
-   *
-   * 0, 90, 180, 270
-   */
-  const directions = [
-    0,
-    90,
-    180,
-    270,
-  ];
-
-  let closest =
-    directions[0];
-
-  let minDistance =
-    Infinity;
-
-  directions.forEach(
-    (direction) => {
-      const directDistance =
-        Math.abs(
-          normalized - direction
-        );
-
-      const circularDistance =
-        Math.min(
-          directDistance,
-          360 - directDistance
-        );
-
-      if (
-        circularDistance <
-        minDistance
-      ) {
-        minDistance =
-          circularDistance;
-
-        closest =
-          direction;
-      }
-    }
-  );
-
-  return closest;
+    return currentDistance < closestDistance
+      ? candidate
+      : closest;
+  }, 0);
 };
 
 /**
- * Возвращает направление конкретного элемента
- * относительно канонического направления branch.
+ * Направление стрелки вдоль конкретного элемента ветви.
  *
- * Важно:
+ * rotation элемента задаёт направление от pin1 к pin2:
  *
- * branch direction:
+ *   0°   →  вправо
+ *   90°  →  вниз
+ *   180° →  влево
+ *   270° →  вверх
  *
- *   fromNode → toNode
- *
- * isSameDirection:
- *
- *   true  = элемент направлен так же,
- *           как branch
- *
- *   false = элемент направлен обратно
- *
- * rotation задаёт геометрическую ось самого элемента.
+ * Если branch traversal идёт против pin1 → pin2,
+ * направление разворачивается на 180°.
  */
 const getElementArrowAngle = (
   element: CircuitElement,
   isSameDirection: boolean
 ): number => {
-  /*
-   * rotation элемента уже задаёт одну из
-   * горизонтальной/вертикальной осей.
-   *
-   * Нормализуем его к:
-   *
-   *   0
-   *   90
-   *   180
-   *   270
-   */
-  const elementAngle =
-    normalizeCardinalAngle(
-      element.rotation ?? 0
-    );
+  const elementAngle = normalizeCardinalAngle(
+    element.rotation
+  );
 
   if (isSameDirection) {
     return elementAngle;
   }
 
-  /*
-   * Если направление элемента противоположно
-   * направлению branch, разворачиваем стрелку
-   * на 180°.
-   */
-  return normalizeCardinalAngle(
-    elementAngle + 180
-  );
-};
-
-const getBranchVisualCenter = (
-  branchElements: CircuitElement[],
-  fallback: {
-    x: number;
-    y: number;
-  }
-) => {
-  if (
-    branchElements.length === 0
-  ) {
-    return fallback;
-  }
-
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-
-  branchElements.forEach(
-    (element) => {
-      minX = Math.min(
-        minX,
-        element.x
-      );
-
-      maxX = Math.max(
-        maxX,
-        element.x
-      );
-
-      minY = Math.min(
-        minY,
-        element.y
-      );
-
-      maxY = Math.max(
-        maxY,
-        element.y
-      );
-    }
-  );
-
-  return {
-    x: Math.round(
-      (minX + maxX) / 2
-    ),
-
-    y: Math.round(
-      (minY + maxY) / 2
-    ),
-  };
+  return (elementAngle + 180) % 360;
 };
 
 export const buildCircuitGraph = (
   elements: CircuitElement[],
   wires: Wire[]
 ): CircuitGraph => {
-  if (
-    elements.length === 0
-  ) {
-    return {
-      nodes: [],
-      branches: [],
-    };
+  if (elements.length === 0) {
+    return { nodes: [], branches: [] };
   }
 
   /*
-   * Единый источник истины
-   * для определения topology.
+   * Единый источник истины для topology:
+   *
+   * Canvas → detectVisualNodes()
+   * Graph Builder → detectCircuitNodes()
+   *
+   * Оба используют один и тот же detector.
    */
-  const {
-    clusters,
-    elementLinks,
-  } = detectCircuitNodes(
+  const { clusters, elementLinks } = detectCircuitNodes(
     elements,
     wires
   );
 
-  const links: CircuitElementClusterLink[] =
-    elementLinks;
-
-  const clusterById =
-    new Map(
-      clusters.map(
-        (cluster) => [
-          cluster.id,
-          cluster,
-        ]
-      )
-    );
+  const links: CircuitElementClusterLink[] = elementLinks;
 
   /*
-   * Канонический порядок узлов.
+   * Существенные узлы уже отфильтрованы и отсортированы
+   * внутри detectCircuitNodes():
    *
-   * Сначала X, затем Y.
+   *     X ↑
+   *     Y ↑ при одинаковом X
    */
-  const sortedClusters =
-    [...clusters].sort(
-      (a, b) =>
-        comparePoints(
-          a.position.x,
-          a.position.y,
-          b.position.x,
-          b.position.y
-        ) ||
-        a.id.localeCompare(
-          b.id
-        )
-    );
-
-  let essentialClusters =
-    sortedClusters.map(
-      (cluster) =>
-        cluster.id
-    );
+  let essentialClusters = clusters.map(
+    (cluster) => cluster.id
+  );
 
   /*
-   * Одноконтурная цепь без
-   * визуальных узлов.
+   * Краевой случай:
+   * одноконтурная цепь без разветвлений.
+   *
+   * Этот искусственный узел НЕ является визуальным узлом.
+   * Он нужен только для внутреннего представления branch graph.
    */
-  if (
-    essentialClusters.length === 0 &&
-    links.length > 0
-  ) {
-    essentialClusters = [
-      links[0].c1,
-    ];
+  if (essentialClusters.length === 0 && links.length > 0) {
+    essentialClusters = [links[0].c1];
   }
 
-  const letters =
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-  const topoNodes: TopoNode[] =
-    essentialClusters.map(
-      (
-        clusterId,
-        index
-      ) => {
-        const cluster =
-          clusterById.get(
-            clusterId
-          );
+  const clusterById = new Map(
+    clusters.map((cluster) => [cluster.id, cluster])
+  );
 
-        return {
-          id: clusterId,
+  const elementById = new Map(
+    elements.map((element) => [element.id, element])
+  );
 
-          label:
-            letters[
-              index %
-                letters.length
-            ],
+  const topoNodes: TopoNode[] = essentialClusters.map(
+    (clusterId, index) => {
+      const cluster = clusterById.get(clusterId);
 
-          position:
-            cluster?.position ??
-            links[0]?.p1 ?? {
-              x: 0,
-              y: 0,
-            },
+      const position =
+        cluster?.position ??
+        links[0]?.p1 ?? {
+          x: 0,
+          y: 0,
         };
-      }
-    );
 
-  const essentialSet =
-    new Set(
-      essentialClusters
-    );
+      return {
+        id: clusterId,
+        label: letters[index % letters.length],
+        position,
+      };
+    }
+  );
+
+  const essentialSet = new Set(essentialClusters);
 
   /*
-   * Adjacency graph.
-   *
-   * isForward здесь пока означает
-   * направление конкретного шага DFS.
-   *
-   * После построения branch направление
-   * нормализуется независимо от DFS.
+   * Построение adjacency для существующего алгоритма ветвей.
    */
   interface AdjEdge {
     link: CircuitElementClusterLink;
@@ -333,122 +146,68 @@ export const buildCircuitGraph = (
     isForward: boolean;
   }
 
-  const adj =
-    new Map<
-      string,
-      AdjEdge[]
-    >();
+  const adj = new Map<string, AdjEdge[]>();
 
-  links.forEach(
-    (link) => {
-      if (
-        !adj.has(link.c1)
-      ) {
-        adj.set(
-          link.c1,
-          []
-        );
-      }
-
-      if (
-        !adj.has(link.c2)
-      ) {
-        adj.set(
-          link.c2,
-          []
-        );
-      }
-
-      adj
-        .get(link.c1)!
-        .push({
-          link,
-          targetCluster:
-            link.c2,
-          isForward:
-            true,
-        });
-
-      adj
-        .get(link.c2)!
-        .push({
-          link,
-          targetCluster:
-            link.c1,
-          isForward:
-            false,
-        });
+  links.forEach((link) => {
+    if (!adj.has(link.c1)) {
+      adj.set(link.c1, []);
     }
-  );
 
-  const visitedElements =
-    new Set<string>();
+    if (!adj.has(link.c2)) {
+      adj.set(link.c2, []);
+    }
 
-  const branches: TopoBranch[] =
-    [];
+    adj.get(link.c1)!.push({
+      link,
+      targetCluster: link.c2,
+      isForward: true,
+    });
+
+    adj.get(link.c2)!.push({
+      link,
+      targetCluster: link.c1,
+      isForward: false,
+    });
+  });
+
+  const visitedElements = new Set<string>();
+  const branches: TopoBranch[] = [];
 
   let branchIndex = 1;
 
-  for (
-    const startCluster of
-      essentialClusters
-  ) {
-    const edges =
-      adj.get(
-        startCluster
-      ) ?? [];
+  for (const startCluster of essentialClusters) {
+    const edges = adj.get(startCluster) || [];
 
-    for (
-      const startEdge of
-        edges
-    ) {
+    for (const startEdge of edges) {
       if (
         visitedElements.has(
-          startEdge.link
-            .element.id
+          startEdge.link.element.id
         )
       ) {
         continue;
       }
 
-      const branchElements: BranchElement[] =
-        [];
+      const branchElements: BranchElement[] = [];
 
-      const branchCircuitElements: CircuitElement[] =
-        [];
-
-      let currentCluster =
-        startCluster;
-
-      let currEdge:
-        | AdjEdge
-        | undefined =
-        startEdge;
+      let currentCluster = startCluster;
+      let currEdge: AdjEdge | undefined = startEdge;
 
       while (
         currEdge &&
         !visitedElements.has(
-          currEdge.link
-            .element.id
+          currEdge.link.element.id
         )
       ) {
-        const element =
-          currEdge.link
-            .element;
-
         visitedElements.add(
-          element.id
+          currEdge.link.element.id
         );
 
-        branchCircuitElements.push(
-          element
-        );
+        const el = currEdge.link.element;
 
         branchElements.push({
-          id: element.id,
-          type: element.type,
-          label: element.label,
-
+          id: el.id,
+          type: el.type,
+          label: el.label,
           isSameDirection:
             currEdge.isForward,
         });
@@ -456,242 +215,91 @@ export const buildCircuitGraph = (
         currentCluster =
           currEdge.targetCluster;
 
-        /*
-         * Дошли до существенного
-         * узла — branch закончена.
-         */
-        if (
-          essentialSet.has(
-            currentCluster
-          )
-        ) {
+        if (essentialSet.has(currentCluster)) {
           break;
         }
 
         const nextEdges =
-          adj.get(
-            currentCluster
-          ) ?? [];
+          adj.get(currentCluster) || [];
 
-        currEdge =
-          nextEdges.find(
-            (edge) =>
-              !visitedElements.has(
-                edge.link
-                  .element.id
-              )
-          );
+        currEdge = nextEdges.find(
+          (edge) =>
+            !visitedElements.has(
+              edge.link.element.id
+            )
+        );
       }
 
-      if (
-        branchElements.length === 0
-      ) {
-        continue;
-      }
-
-      /*
-       * ----------------------------------------
-       * КАНОНИЧЕСКОЕ НАПРАВЛЕНИЕ BRANCH
-       * ----------------------------------------
-       *
-       * Меньший node ID → больший node ID.
-       *
-       * Поэтому направление не зависит
-       * от порядка DFS.
-       */
-      const shouldReverse =
-        compareClusterIds(
-          startCluster,
-          currentCluster
-        ) > 0;
-
-      const normalizedElements =
-        shouldReverse
-          ? [...branchElements]
-              .reverse()
-              .map(
-                (element) => ({
-                  ...element,
-
-                  isSameDirection:
-                    !element.isSameDirection,
-                })
-              )
-          : branchElements;
-
-      const normalizedCircuitElements =
-        shouldReverse
-          ? [
-              ...branchCircuitElements,
-            ].reverse()
-          : branchCircuitElements;
-
-      const normalizedFromNodeId =
-        shouldReverse
-          ? currentCluster
-          : startCluster;
-
-      const normalizedToNodeId =
-        shouldReverse
-          ? startCluster
-          : currentCluster;
-
-      const fromPosition =
-        clusterById.get(
-          normalizedFromNodeId
-        )?.position;
-
-      const toPosition =
-        clusterById.get(
-          normalizedToNodeId
-        )?.position;
-
-      /*
-       * ----------------------------------------
-       * ВЫБОР ЭЛЕМЕНТА ДЛЯ МАРКЕРА
-       * ----------------------------------------
-       *
-       * Берём центральный элемент branch.
-       *
-       * Именно возле него будет размещаться
-       * стрелка тока.
-       */
-      const markerElementIndex =
-        Math.floor(
-          normalizedCircuitElements.length /
-            2
+      const currentSource =
+        branchElements.find(
+          (element) =>
+            element.type === 'CURRENT_SOURCE'
         );
 
-      const markerCircuitElement =
-        normalizedCircuitElements[
-          markerElementIndex
-        ];
+      /*
+       * Выбираем центральный элемент ветви
+       * для визуального маркера тока.
+       *
+       * Это особенно важно для одноконтурной цепи:
+       *
+       *   E1 ─ R1 ─ R2
+       *
+       * вся цепь может быть одной branch,
+       * поэтому нельзя брать просто последний
+       * элемент как representativeElement.
+       */
+      const markerElementIndex =
+        Math.floor(branchElements.length / 2);
 
       const markerBranchElement =
-        normalizedElements[
-          markerElementIndex
-        ];
+        branchElements[markerElementIndex];
+
+      const markerCircuitElement =
+        markerBranchElement
+          ? elementById.get(markerBranchElement.id)
+          : undefined;
 
       /*
-       * ----------------------------------------
-       * НАПРАВЛЕНИЕ СТРЕЛКИ
-       * ----------------------------------------
-       *
-       * Ключевой момент:
-       *
-       * НЕ используем:
-       *
-       *   fromNode → toNode
-       *
-       * потому что branch может быть ломаной.
-       *
-       * Вместо этого используем rotation
-       * конкретного элемента, возле которого
-       * расположен marker.
+       * Теоретически markerBranchElement всегда существует,
+       * но оставляем безопасный fallback.
        */
-      const angleDeg =
-        markerCircuitElement &&
-        markerBranchElement
+      const fallbackElement =
+        elements.find(
+          (element) =>
+            element.id ===
+            branchElements[0]?.id
+        ) ?? elements[0];
+
+      const visualElement =
+        markerCircuitElement ?? fallbackElement;
+
+      const angle =
+        markerBranchElement && visualElement
           ? getElementArrowAngle(
-              markerCircuitElement,
-              markerBranchElement
-                .isSameDirection
+              visualElement,
+              markerBranchElement.isSameDirection
             )
           : 0;
 
-      /*
-       * ----------------------------------------
-       * ЦЕНТР МАРКЕРА
-       * ----------------------------------------
-       *
-       * Пока сохраняем существующую идею
-       * центра bounding box элементов branch.
-       *
-       * Это отдельный вопрос размещения UI
-       * и не влияет на математическое
-       * направление стрелки.
-       */
-      const fallbackCenter =
-        fromPosition &&
-        toPosition
-          ? {
-              x:
-                (fromPosition.x +
-                  toPosition.x) /
-                2,
-
-              y:
-                (fromPosition.y +
-                  toPosition.y) /
-                2,
-            }
-          : {
-              x: 0,
-              y: 0,
-            };
-
-      const baseCenter =
-        getBranchVisualCenter(
-          normalizedCircuitElements,
-          fallbackCenter
-        );
-
-      const currentSource =
-        normalizedElements.find(
-          (element) =>
-            element.type ===
-            'CURRENT_SOURCE'
-        );
-
       branches.push({
-        id:
-          `branch_${branchIndex}`,
-
-        index:
-          branchIndex,
-
-        fromNodeId:
-          normalizedFromNodeId,
-
-        toNodeId:
-          normalizedToNodeId,
-
-        elements:
-          normalizedElements,
-
+        id: `branch_${branchIndex}`,
+        index: branchIndex,
+        fromNodeId: startCluster,
+        toNodeId: currentCluster,
+        elements: branchElements,
         currentSource,
-
-        hasResistor:
-          normalizedElements.some(
-            (element) =>
-              element.type ===
-              'RESISTOR'
-          ),
-
+        hasResistor: branchElements.some(
+          (element) =>
+            element.type === 'RESISTOR'
+        ),
         marker: {
-          index:
-            branchIndex,
-
-          /*
-           * UI использует elementId,
-           * чтобы привязать marker
-           * к конкретному элементу.
-           */
-          elementId:
-            markerCircuitElement?.id ??
-            normalizedCircuitElements[0]
-              ?.id ??
-            '',
-
-          baseCenter,
-
-          /*
-           * Теперь значение ВСЕГДА одно
-           * из:
-           *
-           * 0 / 90 / 180 / 270
-           */
-          angleDeg,
+          index: branchIndex,
+          elementId: visualElement.id,
+          baseCenter: {
+            x: visualElement.x,
+            y: visualElement.y,
+          },
+          angleDeg: angle,
         },
       });
 
