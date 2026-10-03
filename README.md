@@ -1,32 +1,60 @@
-# React + TypeScript + Vite
+# Интерактивный веб-сервис анализа электрических цепей
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Веб-приложение для интерактивного построения линейных электрических цепей постоянного тока и автоматического формирования символьных уравнений по законам Кирхгофа.
 
-Currently, two official plugins are available:
+## Возможности
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- графическое построение электрических схем;
+- добавление резисторов, источников ЭДС и источников тока;
+- соединение элементов проводниками и создание разветвлений;
+- автоматическое определение электрических узлов и ветвей;
+- топологический анализ схемы;
+- автоматическое формирование уравнений по 1-му закону Кирхгофа;
+- автоматическое определение независимых контуров;
+- автоматическое формирование уравнений по 2-му закону Кирхгофа;
+- отображение направлений токов и контуров непосредственно на схеме;
+- синхронизация схемы и результатов анализа.
 
-## React Compiler
+## Технологии
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **React**
+- **TypeScript**
+- **Vite**
+- **SVG**
+- **CSS Modules**
+- **KaTeX**
 
-## Expanding the Oxlint configuration
+В математическом ядре используются графовое представление цепи, DSU (Disjoint Set Union) для определения узлов и алгоритм обхода планарных граней для поиска независимых контуров.
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## Запуск
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+Установить зависимости:
+
+```bash
+npm install
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Запустить проект в режиме разработки:
+
+```bush
+npm run dev
+```
+Собрать production-версию:
+
+```bush
+npm run build
+```
+
+Предпросмотр production-сборки:
+
+```bush
+npm run preview
+```
+
+## Назначение
+
+Проект предназначен для учебного изучения теории электрических цепей, топологического анализа и законов Кирхгофа, обеспечивая непосредственную связь между графической схемой и её математической моделью.
+
+## Автор: Даллакян Сусанна
+
+Учебный проект, 2026.
