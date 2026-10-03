@@ -337,7 +337,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         />
                     </pattern>
 
-                    {/* Стрелка для токов ветвей (красная) */}
+                    {/* Стрелка для токов ветвей*/}
                     <marker
                         id="current-arrow"
                         viewBox="0 0 10 10"
@@ -350,7 +350,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         <path d="M 0 1 L 10 5 L 0 9 z" fill="#dc2626" />
                     </marker>
 
-                    {/* Круговая стрелка направления контура (фиолетовая) */}
+                    {/* Круговая стрелка направления контура*/}
                     <marker
                         id="loop-arrow"
                         viewBox="0 0 10 10"

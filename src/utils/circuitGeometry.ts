@@ -50,28 +50,6 @@ export interface CircuitNodeDetection {
   elementLinks: CircuitElementClusterLink[];
 }
 
-/**
- * Единая точка истины для определения электрических кластеров схемы.
- *
- * Провода объединяют точки в электрические кластеры.
- *
- * Обычный существенный узел:
- *   - кластер, к которому подключено не менее трех выводов элементов.
- *
- * Дополнительный случай:
- *   - конец параллельных ветвей.
- *
- * Последний случай нужен для корректного представления multigraph:
- *
- *      A ── R1 ── B
- *      A ── R2 ── B
- *
- * Здесь B может иметь только два подключения элементов,
- * но его нельзя схлопывать в последовательную branch.
- *
- * Порядок узлов стабилен:
- * сначала X, затем Y.
- */
 export const detectCircuitNodes = (
   elements: CircuitElement[],
   wires: Wire[]
@@ -85,7 +63,6 @@ export const detectCircuitNodes = (
 
   const dsu = new DSU();
 
-  // 1. Объединяем точки, соединённые проводами.
   wires.forEach((wire) => {
     dsu.union(
       coordKey(wire.from.x, wire.from.y),
@@ -93,8 +70,6 @@ export const detectCircuitNodes = (
     );
   });
 
-  // 2. Определяем, к каким электрическим кластерам подключены
-  // оба вывода каждого элемента.
   const rawLinks = elements.map((element) => {
     const [pin1, pin2] = getElementPins(element);
 
@@ -115,15 +90,6 @@ export const detectCircuitNodes = (
     };
   });
 
-  /*
-   * DSU root не используем как внешний ID.
-   *
-   * Например, один и тот же электрический кластер при другом порядке
-   * union() потенциально может получить другой root.
-   *
-   * Поэтому строим стабильный ID из минимальной координаты,
-   * принадлежащей кластеру.
-   */
   const clusterKeys = new Map<string, Set<string>>();
 
   const addClusterKey = (root: string, key: string): void => {
@@ -169,13 +135,6 @@ export const detectCircuitNodes = (
     }
   }
 
-  /*
-   * 3. Собираем точки подключения элементов каждого кластера.
-   *
-   * Отдельно считаем степень каждой геометрической точки по проводам.
-   * Это позволяет отличить реальную точку junction от произвольного
-   * набора точек одного электрического кластера.
-   */
   const pointsByCluster = new Map<string, Point[]>();
   const pinCountByClusterKey = new Map<string, number>();
   const wireDegreeByClusterKey = new Map<string, number>();
@@ -214,9 +173,6 @@ export const detectCircuitNodes = (
     }
   });
 
-  /*
-   * 4. Нормализуем связи элементов к каноническим ID кластеров.
-   */
   const elementLinks: CircuitElementClusterLink[] = rawLinks.map(
     ({ element, c1, c2, p1, p2 }) => {
       const canonicalC1 = canonicalIdByRoot.get(c1) ?? c1;
@@ -235,30 +191,6 @@ export const detectCircuitNodes = (
     }
   );
 
-  /*
-   * 5. Находим электрические кластеры, которые являются
-   * концами параллельных ветвей.
-   *
-   * В обычной последовательной цепочке:
-   *
-   *     A ── R1 ── X ── R2 ── B
-   *
-   * X имеет два подключения и может быть схлопнут
-   * при построении branch.
-   *
-   * Но в параллельной структуре:
-   *
-   *     A ── R1 ── B
-   *     A ── R2 ── B
-   *
-   * B также имеет два подключения, однако его нельзя
-   * схлопывать, иначе R1 и R2 превратятся в одну branch:
-   *
-   *     A ── R1 ── R2 ── A
-   *
-   * Поэтому оба конца пары параллельных элементов
-   * сохраняются как топологические узлы.
-   */
   const parallelEndpointIds = new Set<string>();
 
   const pairCounts = new Map<string, number>();
@@ -291,21 +223,6 @@ export const detectCircuitNodes = (
     }
   });
 
-  /*
-   * 6. Формируем существенные узлы.
-   *
-   * Позиция узла НЕ является средним арифметическим pin-координат.
-   *
-   * Приоритет выбора геометрической точки:
-   *   1. точка с несколькими проводными сегментами (junction);
-   *   2. точка, в которой совпадают несколько pin'ов;
-   *   3. точка с pin + несколькими проводными сегментами;
-   *   4. детерминированный fallback — существующая pin-точка,
-   *      ближайшая к геометрическому центру кластера.
-   *
-   * Поэтому буква узла всегда привязана к реально существующей точке
-   * схемы, а не «плавает» между элементами.
-   */
   const getNodePosition = (
     id: string,
     points: Point[]
@@ -389,13 +306,6 @@ export const detectCircuitNodes = (
     )[0].point;
   };
 
-  /*
-   * ВАЖНО:
-   * сортировка является частью topology contract:
-   *
-   *     X ↑
-   *     при равном X → Y ↑
-   */
   const clusters: CircuitNodeCluster[] =
     Array.from(
       pointsByCluster.entries()

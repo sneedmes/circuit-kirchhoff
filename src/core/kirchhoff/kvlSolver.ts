@@ -24,14 +24,6 @@ interface Face {
 
 const EPSILON = 1e-6;
 
-/**
- * Определяет геометрическое направление ветви
- * в конкретной точке узла.
- *
- * Если у ветви есть marker, используем его как промежуточную
- * геометрическую точку. Это позволяет различать параллельные
- * визуально разведённые ветви.
- */
 const getEdgeAngle = (
   branch: TopoBranch,
   fromNode: Point,
@@ -54,14 +46,6 @@ const getEdgeAngle = (
   );
 };
 
-/**
- * Signed area полигона в координатах SVG.
- *
- * В SVG Y направлен вниз, поэтому:
- *
- *   area > 0 → обход по часовой стрелке
- *   area < 0 → обход против часовой стрелки
- */
 const getLoopArea = (points: Point[]): number => {
   if (points.length < 3) {
     return 0;
@@ -79,12 +63,6 @@ const getLoopArea = (points: Point[]): number => {
   return area / 2;
 };
 
-/**
- * Разбивает passive graph на связные компоненты.
- *
- * Это нужно для удаления внешней грани каждого компонента
- * отдельно.
- */
 const getComponentIds = (
   graph: CircuitGraph,
   branches: TopoBranch[]
@@ -140,17 +118,6 @@ const getComponentIds = (
   return result;
 };
 
-/**
- * Центр строгого bounding box всей геометрии грани.
- *
- * Учитываются:
- *
- *   - позиции узлов;
- *   - marker каждой ветви.
- *
- * Поэтому центр не зависит от того, какая ветвь
- * случайно оказалась первой в DFS.
- */
 const getFaceCenter = (
   face: Face,
   nodeById: Map<string, Point>
@@ -196,26 +163,6 @@ const getFaceCenter = (
   };
 };
 
-/**
- * Поиск независимых контуров как визуальных граней
- * планарного графа.
- *
- * В старой реализации использовались fundamental cycles,
- * получаемые через DFS. Такой подход математически корректен
- * как cycle basis, но не обязан соответствовать визуальным
- * ячейкам схемы.
- *
- * Здесь используется half-edge traversal:
- *
- *   1. Каждая ветвь превращается в два направленных half-edge.
- *   2. Исходящие half-edge каждого узла сортируются по углу.
- *   3. Для каждого half-edge выбирается следующее ребро
- *      на границе той же грани.
- *   4. Полученные циклы являются границами граней.
- *   5. Внешняя грань каждого компонента удаляется.
- *
- * CURRENT_SOURCE намеренно не участвует в KVL-графе.
- */
 export const findIndependentLoops = (
   graph: CircuitGraph
 ): IndependentLoop[] => {
@@ -237,13 +184,6 @@ export const findIndependentLoops = (
     }
   });
 
-  /*
-   * Одноконтурная цепь без явных визуальных узлов.
-   *
-   * graphBuilder создаёт для неё один технический узел.
-   * Поэтому обычный half-edge обход здесь неприменим:
-   * branch имеет вид A -> A.
-   */
   if (nodes.length <= 1) {
     const branch = passiveBranches[0];
 
@@ -302,9 +242,6 @@ export const findIndependentLoops = (
     ];
   }
 
-  /*
-   * Исходящие half-edge каждого узла.
-   */
   const outgoing = new Map<string, HalfEdge[]>();
 
   nodes.forEach((node) => {
@@ -319,10 +256,6 @@ export const findIndependentLoops = (
       return;
     }
 
-    /*
-     * Self-loop для обычного graph не рассматриваем.
-     * Одноконтурный случай обработан выше.
-     */
     if (branch.fromNodeId === branch.toNodeId) {
       return;
     }
@@ -362,13 +295,6 @@ export const findIndependentLoops = (
       ?.push(backward);
   });
 
-  /*
-   * В экранных координатах atan2 увеличивается
-   * по часовой стрелке.
-   *
-   * Поэтому сортировка по углу по возрастанию
-   * даёт clockwise-порядок лучей.
-   */
   outgoing.forEach((edges) => {
     edges.sort((a, b) => {
       const angleDiff = a.angle - b.angle;
@@ -377,13 +303,6 @@ export const findIndependentLoops = (
         return angleDiff;
       }
 
-      /*
-       * Детерминированный tie-breaker.
-       *
-       * Для параллельных ветвей их marker обычно уже
-       * даёт разные углы. Если углы всё же совпали,
-       * используем ID.
-       */
       return a.branch.id.localeCompare(
         b.branch.id
       );
@@ -407,17 +326,6 @@ export const findIndependentLoops = (
     passiveBranches
   );
 
-  /**
-   * Находит следующее half-edge вдоль той же грани.
-   *
-   * Мы пришли в current.toNodeId.
-   *
-   * Сначала находим обратное ребро.
-   * Затем берём ребро непосредственно перед ним
-   * в clockwise-сортировке.
-   *
-   * Это продолжает обход одной грани.
-   */
   const getNextHalfEdge = (
     current: HalfEdge
   ): HalfEdge | undefined => {
@@ -450,9 +358,6 @@ export const findIndependentLoops = (
     return edges[nextIndex];
   };
 
-  /*
-   * Обходим все half-edge.
-   */
   halfEdgeById.forEach((start) => {
     if (visited.has(start.id)) {
       return;
@@ -462,9 +367,6 @@ export const findIndependentLoops = (
 
     let current: HalfEdge | undefined = start;
 
-    /*
-     * Защита от повреждённого topology.
-     */
     let guard = 0;
 
     while (
@@ -485,10 +387,6 @@ export const findIndependentLoops = (
       }
     }
 
-    /*
-     * Если traversal не замкнулся,
-     * это не полноценная грань.
-     */
     if (
       current?.id !== start.id ||
       cycle.length < 2
@@ -496,25 +394,6 @@ export const findIndependentLoops = (
       return;
     }
 
-    /*
-     * Для обычного контура достаточно вершин узлов,
-     * но для параллельных ветвей возникает важный случай:
-     *
-     *     A ─────── B
-     *     A ─────── B
-     *
-     * Грань тогда состоит всего из двух электрических узлов.
-     * Если считать площадь только по [A, B], получится 0,
-     * хотя визуально между двумя ветвями есть полноценная ячейка.
-     *
-     * Поэтому в геометрию границы добавляем marker ветви
-     * как промежуточную точку:
-     *
-     *     A → marker → B → marker → A
-     *
-     * Это также сохраняет различие между параллельными
-     * визуальными ветвями.
-     */
     const points: Point[] = [];
 
     cycle.forEach((edge) => {
@@ -536,10 +415,6 @@ export const findIndependentLoops = (
 
     const area = getLoopArea(points);
 
-    /*
-     * Нулевые циклы возникают у мостов / вырожденных
-     * геометрических случаев. Это не визуальные ячейки.
-     */
     if (Math.abs(area) <= EPSILON) {
       return;
     }
@@ -556,9 +431,6 @@ export const findIndependentLoops = (
     });
   });
 
-  /*
-   * Собираем грани по компонентам.
-   */
   const facesByComponent =
     new Map<string, Face[]>();
 
@@ -578,14 +450,6 @@ export const findIndependentLoops = (
 
   const boundedFaces: Face[] = [];
 
-  /*
-   * У каждой связной компоненты есть одна внешняя грань.
-   *
-   * Она имеет максимальную площадь по модулю.
-   *
-   * Остальные грани являются внутренними
-   * визуальными ячейками.
-   */
   facesByComponent.forEach(
     (componentFaces) => {
       if (componentFaces.length <= 1) {
@@ -612,10 +476,6 @@ export const findIndependentLoops = (
     }
   );
 
-  /*
-   * Детерминированный порядок контуров:
-   * сначала X центра, затем Y.
-   */
   boundedFaces.sort((a, b) => {
     const aCenter = getFaceCenter(
       a,
@@ -637,14 +497,6 @@ export const findIndependentLoops = (
 
   return boundedFaces.map(
     (face, index) => {
-      /*
-       * Направление каждого branch внутри
-       * конкретного контура берётся непосредственно
-       * из half-edge traversal.
-       *
-       * Поэтому знак KVL теперь соответствует
-       * реальному направлению обхода границы ячейки.
-       */
       const entries: LoopBranchEntry[] =
         face.halfEdges.map(
           (edge) => ({
@@ -654,9 +506,6 @@ export const findIndependentLoops = (
           })
         );
 
-      /*
-       * Все элементы контура.
-       */
       const elementIds = Array.from(
         new Set(
           entries.flatMap(
@@ -678,24 +527,11 @@ export const findIndependentLoops = (
 
         elementIds,
 
-        /*
-         * Центр строгого bounding box
-         * всей геометрии ячейки.
-         */
         center: getFaceCenter(
           face,
           nodeById
         ),
 
-        /*
-         * Signed area в SVG-координатах:
-         *
-         *   > 0 → clockwise
-         *   < 0 → counter-clockwise
-         *
-         * Canvas использует это значение
-         * непосредственно для направления стрелки.
-         */
         isClockwise:
           face.area > 0,
       };
@@ -703,10 +539,6 @@ export const findIndependentLoops = (
   );
 };
 
-/**
- * Генерирует уравнения KVL для найденных
- * визуальных ячеек.
- */
 export const generateKVLEquations = (
   loops: IndependentLoop[]
 ): KirchhoffEquation[] => {
@@ -718,9 +550,6 @@ export const generateKVLEquations = (
 
     loop.entries.forEach(
       ({ branch, isForward }) => {
-        /*
-         * Резисторы.
-         */
         const resistors =
           branch.elements.filter(
             (element) =>
@@ -752,9 +581,6 @@ export const generateKVLEquations = (
           );
         }
 
-        /*
-         * Источники напряжения.
-         */
         const voltageSources =
           branch.elements.filter(
             (element) =>
@@ -764,14 +590,6 @@ export const generateKVLEquations = (
 
         voltageSources.forEach(
           (vs) => {
-            /*
-             * isSameDirection описывает физическое
-             * направление источника относительно
-             * канонического направления branch.
-             *
-             * isForward описывает направление
-             * текущего обхода контура.
-             */
             const isEmfForward =
               vs.isSameDirection ===
               isForward;
@@ -803,18 +621,11 @@ export const generateKVLEquations = (
       }
     );
 
-    /*
-     * Если сопротивлений нет, левая часть
-     * может быть пустой.
-     */
     const leftExpression =
       leftTerms.length > 0
         ? leftTerms.join(' ')
         : '0';
 
-    /*
-     * Источники оставляем в правой части.
-     */
     let rightExpression = '0';
 
     if (rightTerms.length > 0) {

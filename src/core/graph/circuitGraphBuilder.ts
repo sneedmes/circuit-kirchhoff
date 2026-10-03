@@ -33,19 +33,6 @@ const normalizeCardinalAngle = (angle: number): number => {
   }, 0);
 };
 
-/**
- * Направление стрелки вдоль конкретного элемента ветви.
- *
- * rotation элемента задаёт направление от pin1 к pin2:
- *
- *   0°   →  вправо
- *   90°  →  вниз
- *   180° →  влево
- *   270° →  вверх
- *
- * Если branch traversal идёт против pin1 → pin2,
- * направление разворачивается на 180°.
- */
 const getElementArrowAngle = (
   element: CircuitElement,
   isSameDirection: boolean
@@ -69,14 +56,6 @@ export const buildCircuitGraph = (
     return { nodes: [], branches: [] };
   }
 
-  /*
-   * Единый источник истины для topology:
-   *
-   * Canvas → detectVisualNodes()
-   * Graph Builder → detectCircuitNodes()
-   *
-   * Оба используют один и тот же detector.
-   */
   const { clusters, elementLinks } = detectCircuitNodes(
     elements,
     wires
@@ -84,24 +63,10 @@ export const buildCircuitGraph = (
 
   const links: CircuitElementClusterLink[] = elementLinks;
 
-  /*
-   * Существенные узлы уже отфильтрованы и отсортированы
-   * внутри detectCircuitNodes():
-   *
-   *     X ↑
-   *     Y ↑ при одинаковом X
-   */
   let essentialClusters = clusters.map(
     (cluster) => cluster.id
   );
 
-  /*
-   * Краевой случай:
-   * одноконтурная цепь без разветвлений.
-   *
-   * Этот искусственный узел НЕ является визуальным узлом.
-   * Он нужен только для внутреннего представления branch graph.
-   */
   if (essentialClusters.length === 0 && links.length > 0) {
     essentialClusters = [links[0].c1];
   }
@@ -137,9 +102,6 @@ export const buildCircuitGraph = (
 
   const essentialSet = new Set(essentialClusters);
 
-  /*
-   * Построение adjacency для существующего алгоритма ветвей.
-   */
   interface AdjEdge {
     link: CircuitElementClusterLink;
     targetCluster: string;
@@ -236,18 +198,6 @@ export const buildCircuitGraph = (
             element.type === 'CURRENT_SOURCE'
         );
 
-      /*
-       * Выбираем центральный элемент ветви
-       * для визуального маркера тока.
-       *
-       * Это особенно важно для одноконтурной цепи:
-       *
-       *   E1 ─ R1 ─ R2
-       *
-       * вся цепь может быть одной branch,
-       * поэтому нельзя брать просто последний
-       * элемент как representativeElement.
-       */
       const markerElementIndex =
         Math.floor(branchElements.length / 2);
 
@@ -259,10 +209,6 @@ export const buildCircuitGraph = (
           ? elementById.get(markerBranchElement.id)
           : undefined;
 
-      /*
-       * Теоретически markerBranchElement всегда существует,
-       * но оставляем безопасный fallback.
-       */
       const fallbackElement =
         elements.find(
           (element) =>

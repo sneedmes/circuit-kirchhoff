@@ -10,7 +10,6 @@
   flex-shrink: 0;
 }
 
-/* Перетаскиваемый разделитель */
 .resizer {
   width: 100%;
   height: 8px;

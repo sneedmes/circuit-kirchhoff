@@ -10,7 +10,7 @@ interface ElementViewProps {
     rotation?: number;
     showPins?: boolean;
     isSelected?: boolean;
-    isHighlighted?: boolean; // Пропс подсветки контура
+    isHighlighted?: boolean;
     onPinMouseDown?: (e: React.MouseEvent, pinIndex: 1 | 2) => void;
 }
 
